@@ -1,0 +1,42 @@
+client/
+facial_recognition_plan.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyd
+*.so
+.Python/
+.venv/
+env/
+venv/
+pip-wheel-metadata/
+.tox/
+.coverage
+.coverage.*
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.flaskenv
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Project specific
+backend/.venv/
+backend/known_faces.jsonl
+client/
+fafacial_recognition_plan.md
