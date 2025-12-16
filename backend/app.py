@@ -47,10 +47,11 @@ KNOWN_FACES_FILE = "known_faces.jsonl"
 known_faces_data = [] # List chứa các dictionary của từng người
 known_face_encodings = [] # List chứa các numpy array của embeddings
 known_face_names = [] # List chứa tên của từng người
+known_face_types = [] # List chứa loại của từng người (familiar, blacklist)
 
 def load_known_faces():
     """Tải dữ liệu khuôn mặt đã biết từ file JSONL."""
-    global known_faces_data, known_face_encodings, known_face_names
+    global known_faces_data, known_face_encodings, known_face_names, known_face_types
     if os.path.exists(KNOWN_FACES_FILE):
         with open(KNOWN_FACES_FILE, 'r') as f:
             for line in f:
@@ -58,19 +59,21 @@ def load_known_faces():
                 known_faces_data.append(data)
                 known_face_encodings.append(np.array(data["encoding"]))
                 known_face_names.append(data["name"])
+                known_face_types.append(data.get("type", "familiar")) # Lấy type hoặc mặc định là "familiar"
         print(f"Loaded {len(known_faces_data)} known faces.")
     else:
         print("No known faces file found. Starting with empty database.")
 
-def save_known_face(name, encoding):
+def save_known_face(name, encoding, face_type="familiar"):
     """Lưu một khuôn mặt mới vào file JSONL."""
-    data = {"name": name, "encoding": encoding.tolist()} # Convert numpy array to list for JSON
+    data = {"name": name, "encoding": encoding.tolist(), "type": face_type} # Convert numpy array to list for JSON
     with open(KNOWN_FACES_FILE, 'a') as f:
         f.write(json.dumps(data) + '\n')
     known_faces_data.append(data)
     known_face_encodings.append(encoding)
     known_face_names.append(name)
-    print(f"Saved new face: {name}")
+    known_face_types.append(face_type)
+    print(f"Saved new face: {name} as {face_type}")
 
 # Tải khuôn mặt đã biết khi server khởi động
 load_known_faces()
@@ -139,19 +142,31 @@ def recognize_face():
                 else:
                     results.append({"name": "Unknown", "distance": None})
 
-            # Logic đưa ra quyết định (đơn giản, có thể cải thiện)
+            # Logic đưa ra quyết định (cập nhật để sử dụng type)
             final_status = "yellow" # Mặc định là người lạ
+
             if results:
-                # Tìm người quen gần nhất
-                familiar_person = next((r for r in results if r["name"] != "Unknown"), None)
-                if familiar_person:
-                    # TODO: Kiểm tra danh sách đen
-                    # Hiện tại chỉ phân biệt quen/lạ
-                    final_status = "green" # Người quen
+                # Tìm người gần nhất đã biết
+                # Lọc ra những người không phải "Unknown" và có khoảng cách nhỏ nhất
+                known_matches = [
+                    (known_face_types[best_match_index], known_face_names[best_match_index], face_distances[best_match_index])
+                    for i, res in enumerate(results)
+                    if res["name"] != "Unknown"
+                ]
+
+                # Nếu có người quen/blacklist được nhận diện
+                if known_matches:
+                    # Sắp xếp theo khoảng cách để lấy người gần nhất
+                    known_matches.sort(key=lambda x: x[2])
+                    best_known_type = known_matches[0][0] # Lấy type của người gần nhất
+
+                    if best_known_type == "blacklist":
+                        final_status = "red" # Người trong danh sách đen
+                    elif best_known_type == "familiar":
+                        final_status = "green" # Người quen
                 else:
                     final_status = "yellow" # Người lạ
             
-            # TODO: Mở comment dòng dưới khi MQTT được cấu hình
             mqtt_client.publish(MQTT_TOPIC_STATUS, final_status)
 
             return jsonify({"status": "success", "result": final_status, "faces": results}), 200
@@ -175,8 +190,11 @@ def register_face():
         return jsonify({"status": "error", "message": "No file part in the request"}), 400
 
     name = request.form['name']
+    face_type = request.form.get('type', 'familiar') # Lấy type hoặc mặc định là familiar
 
     # Kiểm tra xem tên đã tồn tại chưa
+    # Cần kiểm tra kỹ hơn: nếu tên tồn tại nhưng là cùng type thì sao?
+    # Hiện tại, chỉ kiểm tra tên duy nhất.
     if name in known_face_names:
         return jsonify({"status": "error", "message": f"Face with name '{name}' already exists."}), 409
     file = request.files['file']
@@ -195,7 +213,7 @@ def register_face():
             # Chỉ lấy embedding của khuôn mặt đầu tiên được tìm thấy
             face_encoding = face_recognition.face_encodings(image, face_locations)[0]
             
-            save_known_face(name, face_encoding)
+            save_known_face(name, face_encoding, face_type=face_type)
             
             return jsonify({"status": "success", "message": f"Face '{name}' registered successfully."}), 201
 
